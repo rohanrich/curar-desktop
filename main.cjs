@@ -70,10 +70,10 @@ async function runSmoke(){
    const preview=createPreview(APP_ORIGIN+'/api/'+section+'/00000000-0000-4000-8000-000000000000');
    await loaded(preview.webContents);let state;
    for(let attempt=0;attempt<50;attempt++){
-    state=await preview.webContents.executeJavaScript(`({path:location.pathname,back:[...document.querySelectorAll('button')].some(b=>b.textContent.includes('Back')),bridge:typeof window.curarDesktop?.closePreview==='function'})`);
-    if(state.back&&state.bridge)break;await delay(300)
+    state=await preview.webContents.executeJavaScript(`({path:location.pathname,back:[...document.querySelectorAll('button')].some(b=>b.textContent.includes('Back')),bridge:typeof window.curarDesktop?.closePreview==='function',ready:document.querySelector('main')?.dataset.previewReady==='true'})`);
+    if(state.back&&state.bridge&&state.ready)break;await delay(300)
    }
-   if(state.path!=='/preview'||!state.back||!state.bridge)throw Error('Missing attachment Back control: '+JSON.stringify(state));
+   if(state.path!=='/preview'||!state.back||!state.bridge||!state.ready)throw Error('Missing attachment Back control: '+JSON.stringify(state));
    if(folder&&section==='files')fs.writeFileSync(path.join(folder,role.role+'-preview.png'),(await preview.webContents.capturePage()).toPNG());
    const closed=new Promise(resolve=>preview.once('closed',resolve));
    if(section==='question-files')preview.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'});
