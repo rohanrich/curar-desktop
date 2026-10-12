@@ -1,0 +1,86 @@
+name: Build Curar desktop apps
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+            args: --win --x64
+          - os: macos-latest
+            platform: mac
+            args: --mac --universal
+          - os: ubuntu-24.04
+            platform: linux
+            args: --linux --x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      ELECTRON_SKIP_NOTARIZATION: 'true'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Install locked build dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Test permissions, downloads and notifications
+        run: npm test
+      - name: Build and launch both roles
+        shell: bash
+        run: |
+          set -euo pipefail
+          for role in doctor patient; do
+            node scripts/prepare-role.cjs "$role"
+            if [ "$RUNNER_OS" = "Linux" ]; then
+              xvfb-run -a npm run smoke
+            else
+              npm run smoke
+            fi
+            npx electron-builder ${{ matrix.args }} --publish never
+          done
+      - name: Record installer checksums
+        run: node scripts/manifest.cjs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: curar-${{ matrix.platform }}
+          path: |
+            dist/**/*.exe
+            dist/**/*.dmg
+            dist/**/*.AppImage
+            dist/**/*.deb
+            dist/checksums-*.json
+            smoke-results/**
+          retention-days: 1
+          if-no-files-found: error
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          path: installers
+          merge-multiple: true
+      - name: Publish verified installers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          tag="v$version"
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Curar Desktop $version" --notes-file RELEASE-NOTES.md
+          find installers -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.AppImage' -o -name '*.deb' -o -name 'checksums-*.json' \) -exec gh release upload "$tag" --repo "$GITHUB_REPOSITORY" {} +

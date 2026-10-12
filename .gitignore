@@ -1,0 +1,5 @@
+node_modules/
+dist/
+smoke-results/
+electron-builder.json
+.DS_Store
