@@ -10,5 +10,6 @@ if(window.location.origin==='https://app.curar.in'){
   disableNotifications:()=>ipcRenderer.invoke('curar:notifications-disable'),
   testNotification:(medicine=false)=>ipcRenderer.invoke('curar:notification-test',medicine===true),
   openWhatsApp:(phone)=>ipcRenderer.invoke('curar:whatsapp',String(phone)),
+  closePreview:()=>ipcRenderer.invoke('curar:preview-close'),
  }));
 }

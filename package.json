@@ -1,6 +1,6 @@
 {
   "name": "curar-desktop",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Separate doctor and patient desktop clients for Curar",
   "main": "main.cjs",
   "private": true,

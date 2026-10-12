@@ -1,3 +1,9 @@
+# 1.0.1 — 13 October 2026
+
+Images, videos and PDFs stay in app previews with Back/Escape controls. Closing an attachment returns to the same screen. Call clinic displays the clinic phone number with Copy and Back actions. macOS disk images include Installer in their filenames. Selected chat files can be previewed before sending.
+
+Patient medicine reminders use locally timed IST prescriptions while the app runs on an awake computer, and clinic alerts are deduplicated per device. Reading an alert elsewhere does not suppress delivery. Prescriptions refresh while online. Sleep, fully quitting, system permissions and Focus settings still affect delivery.
+
 Separate Curar Doctor and Curar Patient desktop apps, connected to https://app.curar.in.
 
 - Windows: x64 `.exe` installer.
