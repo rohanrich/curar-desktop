@@ -61,7 +61,7 @@ jobs:
         with:
           name: curar-${{ matrix.platform }}
           path: |
-            dist/**/*.exe
+            dist/**/Curar-*.exe
             dist/**/*.dmg
             dist/**/*.AppImage
             dist/**/*.deb
@@ -84,10 +84,4 @@ jobs:
       - name: Publish verified installers
         env:
           GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          version=$(node -p "require('./package.json').version")
-          tag="v$version"
-          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Curar Desktop $version" --notes-file RELEASE-NOTES.md
-          find installers -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.AppImage' -o -name '*.deb' -o -name 'checksums-*.json' \) -exec gh release upload "$tag" --repo "$GITHUB_REPOSITORY" {} +
+        run: node scripts/publish.cjs installers

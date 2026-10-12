@@ -1,0 +1,39 @@
+name: Complete a desktop release from verified builds
+on:
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: Successful three-platform build run containing all installer artifacts
+        required: true
+        type: string
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Verify source build and successful platform jobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+        run: |
+          node -e "if(!/^\\d+$/.test(process.env.BUILD_RUN_ID))throw Error('Invalid build run ID')"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID" > build-run.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID/jobs" > build-jobs.json
+          node -e "const run=require('./build-run.json'),jobs=require('./build-jobs.json').jobs;const builds=jobs.filter(job=>job.name.startsWith('build ('));if(run.name!=='Build Curar desktop apps'||builds.length!==3||builds.some(job=>job.conclusion!=='success'))throw Error('All platform builds must pass')"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          path: installers
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.build_run_id }}
+      - name: Verify hashes and publish only missing installer assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/publish.cjs installers build-run.json
