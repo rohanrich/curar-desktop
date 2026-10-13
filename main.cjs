@@ -63,6 +63,19 @@ async function runSmoke(){
   if(!result.bridge||result.role!==role.role||!result.buttons.includes('Sign in')||!result.label?.includes(role.role==='doctor'?'Email':'Patient ID')||!prefs.sandbox||!prefs.contextIsolation||prefs.nodeIntegration)throw Error('Login or security checks failed: '+JSON.stringify(result));
   const folder=process.env.CURAR_SMOKE_OUTPUT;
   if(folder){fs.mkdirSync(folder,{recursive:true});window.show();await delay(1000);fs.writeFileSync(path.join(folder,role.role+'-login.png'),(await window.webContents.capturePage()).toPNG())}
+  const accessibilityChecks=[];
+  window.webContents.debugger.attach('1.3');
+  const ax=await window.webContents.debugger.sendCommand('Accessibility.getFullAXTree');
+  const spoken=ax.nodes.filter(n=>!n.ignored).map(n=>n.name?.value).filter(Boolean);
+  if(!spoken.includes('Change language')||!spoken.includes('Change appearance')||!spoken.includes('Sign in'))throw Error('Missing login accessibility names');
+  window.webContents.debugger.detach();
+  for(const zoom of [2,4]){
+   window.webContents.setZoomFactor(zoom);await delay(400);
+   const size=await window.webContents.executeJavaScript(`({viewport:innerWidth,scrollWidth:document.documentElement.scrollWidth,named:[...document.querySelectorAll('button')].every(b=>!!(b.getAttribute('aria-label')||b.textContent.trim()))})`);
+   if(size.scrollWidth>size.viewport+1||!size.named)throw Error('Enlarged login lost reflow or labels: '+JSON.stringify(size));accessibilityChecks.push({zoom,...size});
+  }
+  window.webContents.setZoomFactor(1);
+  if(folder)fs.writeFileSync(path.join(folder,role.role+'-accessibility.json'),JSON.stringify({spoken,accessibilityChecks},null,2));
   const mainUrl=window.webContents.getURL(),checks=[];
   const denied=await window.webContents.executeJavaScript(`window.curarDesktop.closePreview().then(()=>false,()=>true)`);
   if(!denied)throw Error('Main window was allowed to close as an attachment');
