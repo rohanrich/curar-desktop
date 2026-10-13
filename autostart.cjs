@@ -1,0 +1,5 @@
+'use strict';
+const fs=require('node:fs');const path=require('node:path');const os=require('node:os');
+function linuxEntry(name,executable){if(/[\r\n]/.test(name+executable))throw Error('Invalid startup entry');const quoted='"'+executable.replace(/(["\\`$])/g,'\\$1').replace(/%/g,'%%')+'"';return '[Desktop Entry]\nType=Application\nName='+name+'\nExec='+quoted+' --background\nTerminal=false\nX-GNOME-Autostart-enabled=true\nComment=Receive Curar clinic notifications\n';}
+function configureAutostart(app,role,enabled){if(!app.isPackaged)return;if(process.platform==='linux'){const folder=path.join(process.env.XDG_CONFIG_HOME||path.join(os.homedir(),'.config'),'autostart'),file=path.join(folder,'curar-'+role.role+'.desktop');if(enabled){fs.mkdirSync(folder,{recursive:true});fs.writeFileSync(file,linuxEntry(role.name,process.env.APPIMAGE||app.getPath('exe')),{mode:0o600})}else if(fs.existsSync(file))fs.unlinkSync(file)}else app.setLoginItemSettings({openAtLogin:enabled,args:['--background']});}
+module.exports={configureAutostart,linuxEntry};

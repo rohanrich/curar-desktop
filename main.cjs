@@ -3,6 +3,7 @@ const {app,BrowserWindow,Menu,Tray,Notification,session,ipcMain,shell,dialog,nat
 const fs=require('node:fs');const path=require('node:path');
 const role=require('./role.json');
 const {MedicineTimers}=require('./medicine.cjs');
+const {configureAutostart}=require('./autostart.cjs');
 const {APP_ORIGIN,clinicUrl,externalUrl,safeFilename,notificationUrl,notificationText,freshNotifications,previewPage}=require('./policy.cjs');
 if(!['doctor','patient'].includes(role.role))throw Error('Invalid app role');
 app.setName(role.name);app.setAppUserModelId(role.appId);
@@ -13,7 +14,7 @@ const smoke=process.env.CURAR_DESKTOP_SMOKE==='1';
 if(smoke&&process.platform==='linux')app.disableHardwareAcceleration();
 const previewWindows=new Map();
 let window,deviceSession,tray,quitting=false,polling=false,lastUser='',seen=new Set(),status='Sign in, then enable desktop notifications.';
-let prefs={notifications:false,keepRunning:true,medicineBell:true,accounts:{}};
+let prefs={notifications:false,keepRunning:true,startAtLogin:true,medicineBell:true,accounts:{}};
 const prefsPath=path.join(app.getPath('userData'),'desktop-settings.json');
 try{const saved=JSON.parse(fs.readFileSync(prefsPath,'utf8'));prefs={...prefs,...saved,accounts:saved.accounts||{}}}catch{}
 function savePrefs(){fs.mkdirSync(path.dirname(prefsPath),{recursive:true});fs.writeFileSync(prefsPath,JSON.stringify(prefs),{mode:0o600})}
@@ -41,8 +42,8 @@ function createWindow(url){window=new BrowserWindow({width:1220,height:840,minWi
  window.webContents.on('will-redirect',(event,url)=>{if(!clinicUrl(url))event.preventDefault()});
  window.webContents.on('will-attach-webview',event=>event.preventDefault());
  window.webContents.on('did-fail-load',(_event,code,_message,url,main)=>{if(main&&code!==-3&&clinicUrl(url)){window.show();if(!smoke)void dialog.showMessageBox(window,{type:'warning',title:'Curar connection unavailable',message:'Check your internet connection, then choose Reload in the View menu. Your saved sign-in is retained.'})}});
- window.once('ready-to-show',()=>window.show());
- window.on('close',event=>{if(!quitting&&!smoke&&prefs.keepRunning&&tray){event.preventDefault();window.hide();if(process.platform==='darwin')app.dock?.hide()}});
+ window.once('ready-to-show',()=>{if(!process.argv.includes('--background')||smoke)window.show()});
+ window.on('close',event=>{if(!quitting&&!smoke&&prefs.keepRunning){event.preventDefault();window.hide();if(process.platform==='darwin')app.dock?.hide()}});
  void window.loadURL(url);
  if(smoke)void runSmoke();
 }
@@ -101,23 +102,24 @@ async function runSmoke(){
 }
 
 function menus(){Menu.setApplicationMenu(Menu.buildFromTemplate([
- {label:role.name,submenu:[{label:'Open Curar',click:()=>openWindow()},{label:'Keep running after closing the window',type:'checkbox',checked:prefs.keepRunning,click:item=>{prefs.keepRunning=item.checked;savePrefs()}},{type:'separator'},{role:'quit'}]},
+ {label:role.name,submenu:[{label:'Open Curar',click:()=>openWindow()},{label:'Start Curar when I sign in to this computer',type:'checkbox',checked:prefs.startAtLogin,click:item=>{prefs.startAtLogin=item.checked;try{configureAutostart(app,role,item.checked);savePrefs()}catch{status='Startup could not be configured. Check your system login items.'}}},{label:'Keep running after closing the window',type:'checkbox',checked:prefs.keepRunning,click:item=>{prefs.keepRunning=item.checked;savePrefs()}},{type:'separator'},{role:'quit'}]},
  {role:'editMenu'},{label:'View',submenu:[{role:'reload'},{role:'resetZoom'},{role:'zoomIn'},{role:'zoomOut'},{role:'togglefullscreen'}]},
  {label:'Help',submenu:[{label:'Curar website',click:()=>void shell.openExternal('https://www.curar.in')},{label:'Downloads and updates',click:()=>void shell.openExternal(APP_ORIGIN+'/desktop/')},{label:'Privacy and terms',click:()=>void shell.openExternal(APP_ORIGIN+'/android/privacy.html')}]}]));
- const icon=nativeImage.createFromPath(path.join(__dirname,'assets/icon.png')).resize({width:22,height:22});try{tray=new Tray(icon);tray.setToolTip(role.name);tray.setContextMenu(Menu.buildFromTemplate([{label:'Open '+role.name,click:()=>openWindow()},{label:'Quit '+role.name,click:()=>{quitting=true;app.quit()}}]));tray.on('double-click',()=>openWindow())}catch{prefs.keepRunning=false}
+ const icon=nativeImage.createFromPath(path.join(__dirname,'assets/icon.png')).resize({width:22,height:22});try{tray=new Tray(icon);tray.setToolTip(role.name);tray.setContextMenu(Menu.buildFromTemplate([{label:'Open '+role.name,click:()=>openWindow()},{label:'Quit '+role.name,click:()=>{quitting=true;app.quit()}}]));tray.on('double-click',()=>openWindow())}catch{status='Background mode is active. Reopen Curar from its app icon.'}
 }
 if(!app.requestSingleInstanceLock())app.quit();else{
- app.on('second-instance',()=>openWindow());app.on('activate',()=>{app.dock?.show();openWindow()});app.on('before-quit',()=>{quitting=true;medicineTimers.clear()});app.on('window-all-closed',()=>{if(!prefs.keepRunning||!tray)app.quit()});
+ app.on('second-instance',()=>openWindow());app.on('activate',()=>{app.dock?.show();openWindow()});app.on('before-quit',()=>{quitting=true;medicineTimers.clear()});app.on('window-all-closed',()=>{if(!prefs.keepRunning)app.quit()});
  app.whenReady().then(()=>{
   deviceSession=session.fromPartition('persist:curar-'+role.role);deviceSession.setPermissionRequestHandler((_contents,permission,callback,details)=>{callback(clinicUrl(details.requestingUrl||'')&&(permission==='clipboard-sanitized-write'||permission==='notifications'&&prefs.notifications))});deviceSession.setPermissionCheckHandler((_contents,permission,origin)=>clinicUrl(origin)&&(permission==='clipboard-sanitized-write'||permission==='notifications'&&prefs.notifications));
   deviceSession.on('will-download',(_event,item)=>{const source=item.getURL();if(!clinicUrl(source)&&!source.startsWith('blob:'+APP_ORIGIN+'/')){item.cancel();return}const directory=path.join(app.getPath('downloads'),'Curar');fs.mkdirSync(directory,{recursive:true});let dest=path.join(directory,safeFilename(item.getFilename()));if(fs.existsSync(dest)){const ext=path.extname(dest);dest=dest.slice(0,-ext.length)+'-'+Date.now()+ext}item.setSavePath(dest);item.once('done',(_event,state)=>{if(state==='completed'&&!smoke)notify({kind:'download',title:'Saved to Downloads / Curar',preview:path.basename(dest),created_at:new Date().toISOString()});else if(state!=='completed'&&!smoke)void dialog.showMessageBox({type:'warning',message:'The file download did not complete. Try Download PDF again.'})})});
   ipcMain.handle('curar:preview-close',event=>{const preview=previewWindows.get(event.sender.id);if(!preview||event.senderFrame!==event.sender.mainFrame||!clinicUrl(event.senderFrame.url))throw Error('Only this attachment window may close itself.');preview.close()});
   handle('curar:info',()=>({role:role.role,platform:process.platform,version:app.getVersion(),name:role.name}));
-  handle('curar:notification-settings',()=>({enabled:prefs.notifications,supported:Notification.isSupported(),message:status}));
+  handle('curar:notification-settings',()=>({enabled:prefs.notifications,supported:Notification.isSupported(),message:status,startAtLogin:prefs.startAtLogin,keepRunning:prefs.keepRunning}));
   handle('curar:notifications-enable',async()=>{const confirmation=await dialog.showMessageBox(window,{type:'question',buttons:['Enable notifications','Cancel'],defaultId:0,cancelId:1,message:'Allow '+role.name+' to show clinic updates?',detail:'Patient names, messages and medication details may appear in notifications. Curar keeps running in the background when its window closes. Alerts require internet access, a running app, and system notification permissions.'});if(confirmation.response!==0)return {enabled:false,message:'Notifications were not enabled.'};prefs.notifications=true;savePrefs();await poll();return {enabled:true,message:status}});
   handle('curar:notifications-disable',()=>{prefs.notifications=false;medicineTimers.clear();savePrefs();return {enabled:false,message:'Desktop notifications disabled.'}});
   handle('curar:notification-test',medicine=>{if(!prefs.notifications)throw Error('Enable desktop notifications first.');notify({kind:medicine===true?'medication':'test',title:medicine===true?'Synthetic medicine reminder · Check prescription for actual instructions':'Desktop notification test',preview:medicine===true?'Medicine bell test. No dose is being prescribed.':'Curar desktop is ready for notifications.',created_at:new Date().toISOString()});return {message:'Test submitted to the operating system. Check notification permissions, sound and Focus settings.'}});
   handle('curar:whatsapp',async number=>{const clean=String(number).replace(/\D/g,'');const digits=clean.length===10?'91'+clean:clean;if(!/^\d{7,15}$/.test(digits))throw Error('Enter a valid WhatsApp number.');await shell.openExternal('https://wa.me/'+digits+'?text='+encodeURIComponent('Hello, your report is ready. I will attach the PDF here for you.'));return {opened:true}});
+  if(!smoke)try{configureAutostart(app,role,prefs.startAtLogin)}catch{status='Startup could not be configured. Check your system login items.'}
   menus();createWindow(APP_ORIGIN+'/?desktop='+role.role);if(!smoke){setInterval(()=>void poll(),15000);powerMonitor.on('resume',()=>{medicineSyncAt=0;void poll()});powerMonitor.on('unlock-screen',()=>void poll());void poll()}
  });
 }
