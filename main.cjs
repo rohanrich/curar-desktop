@@ -1,9 +1,10 @@
 'use strict';
-const {app,BrowserWindow,Menu,Tray,Notification,session,ipcMain,shell,dialog,nativeImage,powerMonitor,clipboard}=require('electron');
+const {app,BrowserWindow,Menu,Tray,Notification,session,ipcMain,shell,dialog,nativeImage,powerMonitor,clipboard,systemPreferences}=require('electron');
 const fs=require('node:fs');const path=require('node:path');
 const role=require('./role.json');
 const {MedicineTimers}=require('./medicine.cjs');
 const {configureAutostart}=require('./autostart.cjs');
+const {cameraPermission}=require('./camera.cjs');
 const {APP_ORIGIN,clinicUrl,externalUrl,safeFilename,notificationUrl,notificationText,freshNotifications,previewPage}=require('./policy.cjs');
 if(!['doctor','patient'].includes(role.role))throw Error('Invalid app role');
 app.setName(role.name);app.setAppUserModelId(role.appId);
@@ -14,7 +15,7 @@ const smoke=process.env.CURAR_DESKTOP_SMOKE==='1';
 if(smoke&&process.platform==='linux')app.disableHardwareAcceleration();
 const previewWindows=new Map();
 let window,deviceSession,tray,quitting=false,polling=false,lastUser='',seen=new Set(),status='Sign in, then enable desktop notifications.';
-let prefs={notifications:false,keepRunning:true,startAtLogin:true,medicineBell:true,accounts:{}};
+let prefs={camera:false,notifications:false,keepRunning:true,startAtLogin:true,medicineBell:true,accounts:{}};
 const prefsPath=path.join(app.getPath('userData'),'desktop-settings.json');
 try{const saved=JSON.parse(fs.readFileSync(prefsPath,'utf8'));prefs={...prefs,...saved,accounts:saved.accounts||{}}}catch{}
 function savePrefs(){fs.mkdirSync(path.dirname(prefsPath),{recursive:true});fs.writeFileSync(prefsPath,JSON.stringify(prefs),{mode:0o600})}
@@ -110,10 +111,11 @@ function menus(){Menu.setApplicationMenu(Menu.buildFromTemplate([
 if(!app.requestSingleInstanceLock())app.quit();else{
  app.on('second-instance',()=>openWindow());app.on('activate',()=>{app.dock?.show();openWindow()});app.on('before-quit',()=>{quitting=true;medicineTimers.clear()});app.on('window-all-closed',()=>{if(!prefs.keepRunning)app.quit()});
  app.whenReady().then(()=>{
-  deviceSession=session.fromPartition('persist:curar-'+role.role);deviceSession.setPermissionRequestHandler((_contents,permission,callback,details)=>{callback(clinicUrl(details.requestingUrl||'')&&(permission==='clipboard-sanitized-write'||permission==='notifications'&&prefs.notifications))});deviceSession.setPermissionCheckHandler((_contents,permission,origin)=>clinicUrl(origin)&&(permission==='clipboard-sanitized-write'||permission==='notifications'&&prefs.notifications));
+  deviceSession=session.fromPartition('persist:curar-'+role.role);deviceSession.setPermissionRequestHandler((contents,permission,callback,details)=>{callback(permission==='media'?cameraPermission({contents,main:window?.webContents,allowed:prefs.camera,details,request:true}):clinicUrl(details.requestingUrl||'')&&(permission==='clipboard-sanitized-write'||permission==='notifications'&&prefs.notifications))});deviceSession.setPermissionCheckHandler((contents,permission,origin,details)=>permission==='media'?cameraPermission({contents,main:window?.webContents,allowed:prefs.camera,details:{...details,requestingUrl:details.requestingUrl||origin},request:false}):clinicUrl(origin)&&(permission==='clipboard-sanitized-write'||permission==='notifications'&&prefs.notifications));
   deviceSession.on('will-download',(_event,item)=>{const source=item.getURL();if(!clinicUrl(source)&&!source.startsWith('blob:'+APP_ORIGIN+'/')){item.cancel();return}const directory=path.join(app.getPath('downloads'),'Curar');fs.mkdirSync(directory,{recursive:true});let dest=path.join(directory,safeFilename(item.getFilename()));if(fs.existsSync(dest)){const ext=path.extname(dest);dest=dest.slice(0,-ext.length)+'-'+Date.now()+ext}item.setSavePath(dest);item.once('done',(_event,state)=>{if(state==='completed'&&!smoke)notify({kind:'download',title:'Saved to Downloads / Curar',preview:path.basename(dest),created_at:new Date().toISOString()});else if(state!=='completed'&&!smoke)void dialog.showMessageBox({type:'warning',message:'The file download did not complete. Try Download PDF again.'})})});
   ipcMain.handle('curar:preview-close',event=>{const preview=previewWindows.get(event.sender.id);if(!preview||event.senderFrame!==event.sender.mainFrame||!clinicUrl(event.senderFrame.url))throw Error('Only this attachment window may close itself.');preview.close()});
   handle('curar:info',()=>({role:role.role,platform:process.platform,version:app.getVersion(),name:role.name}));
+  handle('curar:camera-enable',async()=>{if(!prefs.camera){const consent=await dialog.showMessageBox(window,{type:'question',buttons:['Allow camera','Back'],defaultId:1,cancelId:1,message:'Allow '+role.name+' to capture a photo?',detail:'The camera preview stays on this device. Only a captured photo you confirm will be attached. Microphone and screen recording are not requested.'});if(consent.response!==0)return {allowed:false};}if(process.platform==='darwin'&&!await systemPreferences.askForMediaAccess('camera'))return {allowed:false};prefs.camera=true;savePrefs();return {allowed:true};});
   handle('curar:notification-settings',()=>({enabled:prefs.notifications,supported:Notification.isSupported(),message:status,startAtLogin:prefs.startAtLogin,keepRunning:prefs.keepRunning}));
   handle('curar:notifications-enable',async()=>{const confirmation=await dialog.showMessageBox(window,{type:'question',buttons:['Enable notifications','Cancel'],defaultId:0,cancelId:1,message:'Allow '+role.name+' to show clinic updates?',detail:'Patient names, messages and medication details may appear in notifications. Curar keeps running in the background when its window closes. Alerts require internet access, a running app, and system notification permissions.'});if(confirmation.response!==0)return {enabled:false,message:'Notifications were not enabled.'};prefs.notifications=true;savePrefs();await poll();return {enabled:true,message:status}});
   handle('curar:notifications-disable',()=>{prefs.notifications=false;medicineTimers.clear();savePrefs();return {enabled:false,message:'Desktop notifications disabled.'}});
