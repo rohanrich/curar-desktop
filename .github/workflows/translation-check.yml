@@ -17,6 +17,8 @@ jobs:
         with:
           node-version: '24'
       - run: npm ci --no-audit --no-fund
+      - name: Install the official Electron runtime
+        run: node -e "require('electron')"
       - name: Configure Linux sandbox
         if: runner.os == 'Linux'
         shell: bash
