@@ -1,0 +1,61 @@
+name: Verify automatic app-language content
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  translate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - run: npm ci --no-audit --no-fund
+      - name: Install the official Electron runtime
+        run: node -e "require('electron')"
+      - name: Configure Linux sandbox
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo chown root:root node_modules/electron/dist/chrome-sandbox
+          sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+      - name: Translate fictional chat and report text using real local models
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a node_modules/.bin/electron scripts/localization-check.cjs
+          else
+            node_modules/.bin/electron scripts/localization-check.cjs
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: localization-${{ runner.os }}
+          path: |
+            localization-results/result.json
+            localization-results/*.png
+          retention-days: 2
+  webkit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - run: npm ci --no-audit --no-fund
+      - run: npm install --no-save playwright@1.58.2 --no-audit --no-fund
+      - run: npx playwright install --with-deps webkit
+      - run: node scripts/localization-webkit.cjs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: localization-WebKit
+          path: localization-webkit-results/**
+          retention-days: 2
