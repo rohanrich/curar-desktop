@@ -1,6 +1,11 @@
 name: Verify automatic app-language content
 on:
   workflow_dispatch:
+    inputs:
+      linux_only:
+        description: Recheck Linux after a runtime fix
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -8,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest, ubuntu-24.04]
+        os: ${{ fromJSON(inputs.linux_only && '["ubuntu-24.04"]' || '["macos-latest","windows-latest","ubuntu-24.04"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 35
     steps:
@@ -42,6 +47,7 @@ jobs:
             localization-results/*.png
           retention-days: 2
   webkit:
+    if: ${{ !inputs.linux_only }}
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
